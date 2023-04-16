@@ -1,0 +1,209 @@
+헤드리스 서비스(None)
+
+- 헤드리스(Headless) 서비스는 대상이 되는 개별 파드의 IP 주소가 직접 반환되느 서비스다.
+ 
+
+각 서비스의 IP 엔드포인트 내용
+서비스 종류 | IP 엔드포인트 내용
+ClusterIP | 쿠버네티스 클러스터 내부에서만 통신이 가능한 가상 IP
+ExternalIP | 특정 쿠버네티스 노드의 IP
+NodePort | 	모든 쿠버네티스 노드의 모든 IP 주소(0.0.0.0)
+LoadBalancer | 	클러스터 외부에서 제공되는 로드 밸런서의 가상 IP
+
+
+- 헤드리스 서비스는 로드 밸런싱을 하기 위한 IP 주소는 제공되지 않고 DNS 라운드 로빈(DNS RR)을 사용한 엔드포인트를 제공한다.(그림. 헤드리스 서비스와 DNS 라운드 로빈)
+- 헤드리스 서비스의 DNS 라운드 로빈에서는 목적지 파드 IP 주소가 클러스터 내부 DNS에서 반환되는 형태로 부하 분산을 하기 때문에 클라이언트에서 DNS 캐시에 주의해야 한다.
+- 스테이트풀셋이 헤드리스 서비스를 사용하는 경우에만 파드명으로 IP 주소를 디스커버리할 수 있다.
+  - sample-statefulset-0 등의 파드명으로 IP 주소를 가져올 수 있다.
+- 기본적으로 쿠버네티스는 파드의 IP 주소를 의식할 필요가 없게 만들어졌으므로, 디플로이먼트 등과 같은 그외 리소스의 경우에는 파드명으로 IP 주소를 가져올 수 없다.
+  - 꼭 필요한 경우 다른 쿠버네티스 API에서 정보를 가져와야 한다.
+
+
+그림> 헤드리스 서비스와 DNS 라운드 로빈
+
+
+
+헤드리스 서비스 생성
+
+- 헤드리스 서비스를 생성하려면 다음 두가지 조건을 만족해야한다. 또 스테이트풀셋과 조합하여 사용하는 경우에는 특정 조건에서 파드명으로 이름 해석을 할 수도 있다.
+  - 서비스의 spec.type이 ClusterIP일 것
+  - 서비스의 spec.clusterIP가 None일 것
+  - [옵션] 서비스의 metadata.name이 스테이트풀셋의 spec.serviceName과 같을 것
+    - 스테이트풀셋으로 생성된 파드명으로 디스커버리하는 경우
+
+- 세번째 조건을 만족하지 않을 경우 DNS 라운드 로빈으로 디스커버리하는 헤드리스 서비스로만 동작하여 파드명으로 질의할 수 있다.
+
+헤드리스 서비스 예제(sample-headless.yaml)
+
+apiVerson: v1
+kind: Service
+matadata:
+  name: sample-headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: "http-port"
+    protocol: "TCP"
+    port: 80
+    targetPort: 80
+  selector:
+    app: sample-app
+
+- 위 서비스와 조합하여 사용할 스테이트풀셋 예.
+  - spec.serviceName이 서비스의 metadata.name과 일치하게 되어 있다.
+
+헤드리스 서비스와 조합하여 사용할 스테이트풀셋 예(sample-statefulset-headless.yaml)
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sample-statefulset-headless
+spec:
+  serviceName: sample-headless # 서비스의 metadata.name과 일치
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      containers:
+      - name: nginx-container
+        image: amsy810/echo-nginx:v2.0
+
+
+
+헤드리스 서비스로 파드명 이름 해석
+- 서비스 이름 해석은 '서비스명.네임스페이스명.svc.cluster.local'로 질의 한다.
+- 헤드리스 서비스의 경우는 FQDN에 대해 정방향으로 질의하면 ClusterIP 대신 DNS 라운드 로빈에서 여러 	파드의 IP 주소가 반환되기 때문에 부하 분산 때는 클라이언트 캐시 등을 생각해야 한다.
+- 레플리카셋 등의 리소스에도 다음과 같이 DNS 라운드 로빈에서 IP 주소가 반환되도록 할 수 있다.
+
+# 파드 IP 주소 확인
+사진>
+
+
+- 일반적으로 클러스터 내부 DNS에서 파드명으로 이름 해석을 할 수 없게 되어 있다.
+- 서비스를 생성할 때 ClusterIP 등과 같은 여러 파드에 엔드포인트가 할당되어 그 엔드포인트의 이름 해석은 제공되지만, 개별 파드명에서 이름 해석은 할 수 없다.
+- 스테이트풀셋이 헤드리스 서비스를 사용하고 서비스의 metadata.name이 스테이트풀셋의 spec.serviceName과 같은 경우 추가로 다음과 같이 파드 단위의 이름 해석을 할 수 있다.
+  - 파드명.서비스명.네임스페이스명.svc.cluster.local
+
+# 파드명으로 서비스 디스커버리
+사진>
+
+
+- 또한, 컨테이너 내부의 relolv.conf 등에는 search 지시자로 다음과 같은 엔트리가 들어 있어 '파드명.서비스명'이나 '파드명.서비스명.네임스페이스명'등으로도 질의할 수 있다.
+
+# 컨테이너 내부의 resolv.conf 확인
+
+
+
+스테이트풀셋 외에 파드명으로 이름 해석
+- 스테이트풀셋의 경우만 파드명으로 이름 해석이 가능하다고 설명했지만, 파드에 설정을 추가하여 파드명으로 이름 해석을 할 수도 있다.
+  - 파드에서 이름을 해석하려면 파드에 spec.hostname과 헤드리스 서비스명과 동일한 spec.subdomain 설정을 추가한다. 이때 spec.hostname은 파드명이 아니어도 된다.
+
+
+코드> 파드명으로 이름을 해석하는 예 (sample-subdomain.yaml)
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-subdomain
+  labels:
+    app: sample-app
+spec:
+  hostname: sample-hostname
+  subdomain: sample-subdomain
+  containers:
+  - name: nginx-container
+    image: amsy810/tools:v2.0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-subdomain
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports: []
+  selector:
+    app: sample-app
+
+
+- 이 설정을 하면 다음과 같이 파드 단위로 이름 해석을 할 수 있다.
+  - Hostname명.Subdomain/서비스명.네임스페이스명.svc.cluster.local
+
+- 디플로이먼트 등에서 이 설정을 할 경우, 매니페스트 구조상 여러 레플리카에서는 같은 hostname만 설정할 수 있다.
+- 또한, 같은 hostname이 지정된 경우는 하나의 A 레코드만 반환되기 때문에 디플로이먼트 등에는 개별 파드명으로 이름 해석이 가능하도록 설정할 수 있다.
+
+# 파드 IP 주소를 확인
+사진>
+
+- 스테이트풀 애플리케이션이나 특별한 요구 사항 외에는 기본적으로 개별 파드를 의식하지 않고 서비스를 통해 관리할 수 있게 시스템을 구성하여 확장성이나 관리 용이성을 확보할 수 있도록 파드명으로 이름 해석을 사용할 때는 신중하게 검토한 후에 사용해야 한다.
+
+
+
+ExternalName 서비스
+
+- ExternalName 서비스는 일반적인 서비스 리소스와 달리 서비스명의 이름 해석에 있어 외부 도메인으로 CNAME을 반환한다.
+- 사용용도를 살펴보면, 다른 이름을 설정하고 싶은 경우, 클러스터 내부에서의 엔드포인트를 쉽게 변경하고 싶을 경우에 사용한다.
+
+그림> Externalname을 사용한 CNAME 이름 해석
+
+
+ExternalName 서비스 생성
+
+코드> ExternalName 서비스 예제(sample-externalname.yaml)
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-externalname
+  namespace: default
+spec:
+  type: ExternalName
+  externalName: external.example.com
+
+
+서비스를 확인하면 External-IP 부분에 CNAME용 FQDN이 표시된다.
+
+사진>
+# 서비스 목록 표시
+
+
+- 컨테이너 내부에서는 '서비스명'이나 '서비스명.네임스페이스명.svc.cluster.local'로 정방향 질의를 하면 CNAME이 반환되는 것을 확인할 수 있다.
+
+사진>
+# 일시적으로 파드를 기동하여 ExternalName의 CNAME 이름 해석을 확인
+
+
+외부 서비스와 느슨한 결합 확보
+- 클러스터 내부에서는 파드와 통신에 서비스 이름 해석을 사용하여 느슨한 결합(loose coupling)을 유지하고 있다.
+- SaaS나 IaaS 등 외부에 있는 서비스를 사용할 떄도 가능하면 느슨한 결합으로 구성해야 한다.
+  - 애플리케이션 등에 외부의 엔드포인트를 등록해 두면 목적지가 변경되었을 때 애플리케이션 측의 설정 변경이 필요하다. 그런데 ExternalName을 사용하면 목적지가 변경되어도 ExternalName 서비스를 변경하는 것만으로 가능하다.
+  - (클러스터 내부 DNS를 사용한 이름 해석의 결과가 바뀌기 때문에) 목적지 변경에 대한 대응을 쿠버네티스 내부에서 끝낼 수 있으므로 외부 서비스와 느슨한 결합을 유지할 수 있다.
+
+그림> ExternalName을 사용한 외부 서비스와의 느슨한 결합 확보
+
+
+외부 서비스와 내부 서비스 간의 전환
+- ExternalName 을 사용하면 외부 서비스와의 느슨한 결합을 확보하고, 외부 서비스와 쿠버네티스에 배포된 클러스터 내부 서비스와의 전환도 유연하게 할 수 있게 된다.
+- 애플리케이션 측은 서비스의 FQDN(store.default.svc.cluster.local)을 지정해 두고 이름 해석이 되면 ExternalName의 CNAME 레코드 또는 ClusterIP의 A 레코드가 반환되는 형태가 되어 애플리케이션 측은 변경 없이 내부 서비스와 외부 서비스를 전환할 수 있다.
+- 한 가지 주의할 점은 ClusterIP 서비스에서 ExternalName 서비스로 전환할 경우 spec.clusterIP를 명시적으로 공란으로 만들어 두어야 한다는 것이다.
+- ExternalName 서비스와 ClusterIP 서비스를 전환하는 경우 이 설정을 잊지 않도록 주의해야 한다.
+
+그림> ExternalName을 사용한 클러스터 내부 서비스에서 외부 서비스로의 전환
+
+
+Endpoints
+
+
+https://yoo11052.tistory.com/193
+
+
+
+
+
