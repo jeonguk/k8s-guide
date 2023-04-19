@@ -1,0 +1,237 @@
+스테이트풀셋
+- 스테이트풀셋(StatefulSet)도 데몬셋과 마찬가지로 레플리카셋의 특수한 형태라고 할 수 있는 리소스다.
+- 이름 그대로 데이터베이스 등과 같은 스테이트풀(stateful)한 워크로드에 사용하기 위한 리소스다.
+
+- 레플리카셋과의 주된 차이점은 다음과 같다
+  - 생성되는 파드명의 접미사는 숫자 인덱스가 부여된 것이다.
+    - sample-satefulset-0, sample-statefulset-1, ... sample-statefulset-N
+    - 파드명이 바뀌지 않는다.
+  - 데이터를 영구적으로 저장하기 위한 구조로 되어있다.
+    - 영구 볼륨(PersistentVolume)을 사용하는 경우에는 파드를 재기동할 때 같은 디스크를 사용하여 다시 생성한다.
+
+
+- 스테이트풀셋에서는 spec.volumeClaimTemplates를 지정할 수 있다.
+  - 이 설정으로 스테이트풀셋으로 생성되는 각 파드에 영구 볼륨 클레임(영구 볼륨 요청)을 설정할 수 있다.
+  - 영구볼륨 클레임을 사용하면 클러스터 외부의 네트워크를 통해 제공되는 영구 볼륨을 파드에 연결할 수 있으므로, 파드를 재기동할 때나 다른 노드로 이동할 때 같은 데이터를 보유한 상태로 컨테이너가 다시 생성된다.
+  - 영구 볼륨은 하나의 파드가 소유할 수도 있고, 영구 볼륨 종류에 따라 여러 파드에서 공유할 수도 있다.
+
+sample-statefulset.yaml
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sample-statefulset
+spec:
+  serviceName: sample-statefulset
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:1.16
+        volumeMounts:
+        - name: www
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: www
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1G
+
+
+
+매니페스트로 스테이트풀셋을 생성한다.
+
+# 스테이트풀셋 생성
+$ kubectl apply -f sample-statefulset.yaml
+statefulset.apps/sample-statefulset created
+
+
+스테이트풀셋을 확인해보면 레플리카셋과 거의 같은 정보가 표시된다.
+
+# 스테이트풀셋 확인
+$ kubectl get statefulsets
+NAME                   READY     AGE
+sample-statefulset      3/3      91s
+
+
+
+파드를 확인해보면 스테이트풀셋으로 생성된 파드명에 연번의 인덱스가 접미사로 부여된 것을 확인할 수 있다.
+
+# 파드 목록 표시
+$ kubectl get pods -o wide
+
+
+
+스테이트풀셋이 사용하고 있는 영구 볼륨 클레임(영구 볼륨 요청)과 영구 볼륨의 목록은 다음과 같이 확인할 수 있다.
+- 스테이트풀셋이 볼륨 리소스를 생성하여 영구 볼륨을 확보한다고 	보면 된다.
+
+# 스테이트풀셋에서 사용되고 있는 영구 볼륨 클레임(영구 볼륨 요청) 확인(일부 항목 생략)
+$ kubectl get persistentvolumeclaims
+
+# 스테이트풀셋에서 사용되고 있는 영구 볼륨 확인(일부 항목 생략)
+$ kubectl get persistentvolumes
+
+사진> 테이트풀셋에서 사용되고 있는 영구 볼륨
+
+
+
+스테이트풀셋 스케일링
+- 스테이트풀셋도 레플리카셋과 같은 방법인 kubectl apply -f 또는 kubectl scale을 사용하여 스케일링할 수 있다.
+
+# 레플리카 수를 3에서 4로 변경한 매니페스트를 apply
+$ sed -i -e 's|replicas: 3|replicas: 4|' sample-statefulset.yaml
+$ kubectl apply -f sample-statefulset.yaml
+statefulset.apps/sample-statefulset configured
+
+# kubectl scale을 사용한 스케일링
+$ kubectl scale statefulset sample-statefulset --replicas=5
+statefulset.apps/sample-statefulset scaled
+
+
+- 스테이트풀셋에서 레플리카 수를 변경하여 파드를 생성하고 삭제하면 레플리카셋이나 데몬셋 등과 달리 기본적으로 파드를 동시에 하나씩만 생성하고 삭제하기 때문에 조금 시간이 걸린다.
+- 스케일 아웃일 때는 인덱스가 가장 작은 것부터 파드를 하나씩 생성하고 이전에 생성된 파다가 Ready 상태가 되고 나서 다음 파드를 생성하기 시작한다.
+  - 이 동작 방식은 스테이프풀셋 리소스 생성 시 처음 파드가 생성될 때도 동일하다.
+
+사진> 스테이트풀셋 스케일 아웃
+
+
+- 반대로 스케일 인일 때는 인덱스가 가장 큰 파드(가장 최근에 생성된 컨테이너)부터 삭제된다.
+사진> 스테이트풀셋 스케일 인
+
+
+- 레플리카셋의 경우 파드가 무작위로 삭제되기 때문에 특정 파드가 마스커가 되는 애플리케이션에는 맞지 않는다.
+- 스테이트풀셋은 0번째 파드가 항상 가장 먼저 생성되고 가장 늦게 삭제되기 때문에 0번째 파드를 마스터 노드로 사용하는 이중화 구조 애플리케이션에 적합하다.
+
+그림> 레플리카셋 스케일 인
+
+
+
+스테이트풀셋 라이프사이클
+- 스테이트풀셋은 레플리카셋 등과 달리 여러 파드가 동시에 생성되지 않고 하나씩 파드를 생성하며 Ready 상태가 되면 다음 파드를 생성한다.
+  - But, 스테이트풀셋에서도 spec.podManagementPolicy를 Parallel로 설정하여 레플리카셋 등고 마찬가지로 병렬로 동시에 파드를 기동시킬 수 있다.
+  - spec.podManagementPolicy 기본값은 OrderedReady로 설정된다.
+
+그림> 스테이트풀셋 podManagementPolicy 설정에 따른 동작 차이
+
+
+코드> 병렬로 동시에 파드를 기동하는 스테이트풀셋 sample-statefulset-parallel.yaml
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sample-statefulset-parallel
+spec:
+  podManagementPolicy: Parallel
+  serviceName: smaple-statefulset-parallel
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:1.16
+
+
+스테이트풀셋 업데이트 전략
+- 디플로이먼트나 데몬셋과 마찬가지로 스테이트풀셋을 업데이트할 때도 업데이트 전략을 두 가지 중에서 선택할 수 있다.
+- 두 가지는 데몬셋과 마찬가지로 OnDelete와 RollingUpdate다.
+  - OnDelete는 스테이트풀셋 매니페스트가 변경되었을 때 파드를 업데이트하지 않고 다른 이유로 파드가 다시 생성될 때 새로운 설정으로 파드가 생성된다.
+  - RollingUpdate는 디플로이먼트와 마찬가지로 즉시 파드를 업데이트한다.
+- 스테이트풀셋의 업데이트 전략은 RollingUpdate가 기본값이다.
+
+
+
+OnDelete
+- OnDlete에서는 스테이트풀셋 매니페스트를 수정하여 이미지 등을 변경했더라도 기존 파드는 업데이트되지 않는다.
+- 스테이트풀셋에서 OnDelete는 영속성 영역을 가진 데이터베이스나 클러스터등에서 많이 사용되기 때문에 수동으로 업데이트하고 싶을 경우 OnDelete를 사용하여 임의의 시점에서나 다음에 재기동할 때 업데이트를 진행하게 되어 있다.
+- type외에 지정할 수 있는 항목은 없다.
+
+코드> OnDelete 업데이트 전략의 스테이트풀셋 sample-statefulset-ondelete.yaml
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sample-statefulset-ondelete
+spec:
+  updateStrategy:
+    type: OnDelete
+  serviceName: sample-statefulset-ondelete
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:1.16
+
+
+
+ RollingUpdate
+ - 디플로이먼트와 마찬가지로 RollingUpdate를 사용한 스테이트풀셋 업데이특 가능하다.
+   - 스테이트풀셋에는 영속성 데이터가 있으므로 디플로이먼트와 다르게 추가 파드를 생성해서 롤링업데이트를 할 수 없다.
+   - 동시에 정지 가능한 최대 파드 수(maxUnavailable)를 지정하여 롤링 업데이트를 할 수도 없으므로 파드마다 READY 상태인지를 확인하고 업데이트하게 된다.
+   - spec.podManagementPolicy가 Parallel로 설정되어 있는 경우에도 병렬로 동시에 처리되지 않고 파드 하나씩 업데이트가 이루어 진다.
+
+- 스테이트풀셋의 RollingUpdate에서는 partition이라는 특정 값을 설정할 수 있다.
+  - partition을 설정하면 전체 파드 중 어떤 파드까지 업데이트할지를 지정할 수 있다.
+  - partition 설정을 사용하면 전체에 영향을 주지 않고 부분적으로 업데이트를 적용하고 확인할 수 있어 안전한 업데이트를 할 수 있다.
+  - OnDelete와 달리 수동으로 재기동한 경우에도 partition 값보다 작은 인덱스를 가진 파드는 업데이트 되지 않는다.
+
+
+사진> 스테이트풀셋 RollingUpdate 시의 Partition
+
+파티션은 spec.updateStrategy.rollingUpdate.partition에 지정한다.
+
+
+코드> RollingUpdate 업데이트 전략에서 partition을 지정한 스테이트풀셋 예(sample-statefulset-rollingUpdate.yaml)
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sample-statefulset-rollingupdate
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 3
+  serviceName: sample-statefulset-rollingupdate
+  replicas: 5
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:1.16
+
+- 위의 스테이트풀셋을 실제로 기동하면 0~4 인덱스를 가진 다섯 개의 파드가 생성된다. 이 상태에서 스테이트풀셋 이미지를 수정하면 partition=3(위에서부터 세 개의 파드는 업데이트 대상 외 = 3 이상의 인덱스를 가진 파드가 업데이트 대상)이기 때문에 인덱스 4와 인덱스 3인 파드가 순서대로 업데이트 된다. 이때 0~2 인덱스를 가진 파드는 업데이트되지 않는다. 이후에 partition 값을 3에서 1로 변경하면, 대상 인덱스가 1 이상이 되고 업데이트되지 않은 인덱스 2와 인덱스 1인 파드고 이 순서대로 업데이트된다.
+
+이미지> # 파드 목록 표시
+
+
+
