@@ -1,0 +1,476 @@
+인그레스
+
+- 인그레스(Ingress)는 L7 로드 밸런싱을 제공하는 리소스다.
+- 인그레스는 서비스들을 묶는 서비스들의 상위 객체로, 서비스 종류의 하나로서가 아닌 독립 리소스로 구현되어 있다.
+- 인그레스를 사용할 때는 kind: Service타입 리소스가 아닌 kind: Ingress 타입 리소스를 지정한다.
+- 쿠버네티스 Network Plicy 리소스에 Ingress/Egress라는 설정 항목이 있지만, 이 인그레스와는 관계가 없다.
+
+1. 리소스와 컨트롤러
+쿠버네티스의 내부 구조(간단설명)
+- 쿠버네티스는 분산 시스템이며 매니페스트로 정의한 리소스를 쿠버네티스에 등록하는 것으로 시작된다.
+  - 등록만으로는 아무런 처리가 이루어지지 않으며, 실체 처리를 하는 컨트롤러라는 시스템 구성 요소가 필요하다.
+  - 디플로이먼트에서는 레플리카셋을 생성하거나 레플리카 수를 변경헤 가면서 롤링 업데이트를 하는 디플로이먼트 컨트롤러라고 하는 시스템 구성 요소가 쿠버네티스 클러스터에서 동작한다.
+  - 디플로이먼트 컨트롤러가 없는 경우 매니페스트로 디플로이먼트 리소스를 생성해도 레플리카셋은 생성되지 않는다.
+  - 각 리소스는 등록된 후 여러 컨트롤러가 실제로 처리를 함으로써 시스템이 동작하게 되어있다.
+
+
+사진> 리소스와 컨트롤러의 관계
+
+
+2. 인그레스 리소스와 인그레스 컨트롤러
+- 인그레스가 실제로 가리키는 것은 다양한 개념의 집합이다.
+  - '인그레스 리소스'란 매니페스트에 등록된 API 리소스를 의미하고, '인그레스 컨트롤러'는 인그레스 리소스가 쿠버네티스에 등록되었을 때 어떤 처리를 한다.
+  - 처리의 예로는 GCP의 GCLB를 조작하여 L7 로드 밸런서 설정을 하거나 Nginx 설정을 변경하여 리로드를 하는 등의 처리를 들 수 있다.
+
+사진< 인그레스 리소스와 인그레스 컨트롤러의 관계
+
+3. 인그레스 종류
+- 인그레스 구현 방법은 여러 가지가 있고 사용 편의성도 다르다.
+- 실제로 많이 사용되는 GKE 인그레스 컨트롤러와 Nginx 인그레스 컨트롤러가 있다. 이 두 가지 컨트롤러는 인그레스 리소스를 생성했을 때 처리를 담당하는 컨트롤러다.
+- 어떤 L7 로드 밸런서를 생성할지는 이 인그레스 컨트롤러에 따라 달라진다.
+- 인그레스는 다음과 같이 크게 두 가지로 분류된다.
+  - 클러스터 외부 로드 밸런서를 사용한 인그레스
+    - GKE 인그레스
+  - 클러스터 내부 인그레스용 파드를 배포하는 인그레스
+    - Nginx 인그레스
+
+사진> 인그레스 구현에 대해
+
+
+클러스터 외부 로드 밸런서를 사용한 인그레스
+- GKE처럼 클러스터 외부 로드 밸런서를 사용한 인그레스의 경우 인그레스 리소스 생성만으로 로드 밸런서의 가상 IP가 할당되어 사용할 수 있다.
+- 인그레스 트래픽은 GCP의 GCLB(Google Cloud Load Balancing)가 트래픽을 수신한 후 GCLB에서 SSL 터미네이션이나 경로 기반 라우팅을 통해 NodePort에 트래픽을 전송함으로써 대상 파드까지 도달한다.
+- 순서를 간략히 하면 다음 두 단계를 통해 전달된다.
+  1. 클라이언트
+  2. -> L7 로드 밸런서(NodePort 경유)
+  3. -> 목적지 파드
+
+사진> 클러스터 외부 로드 밸런서를 사용한 인그레스
+
+
+클러스터 내부엥 인그레스용 파드를 배포하는 인그레스
+
+- '클러스터 내부에 인그레스용 파드를 배포하는 인그레스'패턴은 인그레스 리소스에서 정의한 L7수준의 로드 밸런싱 처리를 하기 위해 인그레스용 파드를 클러스터 내부에 생성해야 한다.
+- 생성한 인그레스용 파드에 대해 클러스터 외부에서 접속할 수 있도록 별도로 인그레스용 파드에 LoadBalancer 서비스를 생성하는 등의 준비가 필요하ㅏ다.
+- 인그레스용 파드가 SSL 터미네이션이나 경로 기반 라우팅 등과 같은 L7 수준의 처리를 하기 위해 부하에 따른 파드 레플리카 수의 오토 스케일링도 고려해야 한다.
+- 인그레스용 파드에 Nginx를 사용한 Nginx 인그레스
+  - 로드 밸런서가 Nginx 파드까지 전송하고, 그다음에는 Nginx가 L7 수준의 처리를 수행할 파드에 전송한다.
+  - 이때 Nginx 파드에서 대상 파드까지는 NodePort를 통과하지 않고 직접 파드 IP 주소로 전송된다. 그 순서를 간략히 하면 다음 세 단계를 통해 전달된다.
+    1. 클라이언트
+    2. -> L4 로드 밸런서(type: LoadBalancer)
+    3. -> Nginx 파드(Nginx 인그레스 컨트롤러)
+    4. -> 목적지 파드
+
+사진> 클러스터 내부에 인그레스용 파드를 배포하는 인그레스
+
+
+인그레스 컨트롤러 배포
+- 인그레스를 사용하려면 인그레스 컨트롤러를 배포해야 한다.
+
+GKE 인그레스 컨트롤러 배포
+- GKE의 경우 클러스터를 생성할 때 HttpLoadBalancing 애드온을 활성화하면 배포된다.
+- 이 애드온은 기본값으로 활성화되어 있다.
+
+
+Nginx 인그레스 컨트롤러 배포
+- Nginx 인그레스를 사용하는 경우에는 Nginx 인그레스 컨트롤러를 배포해야 한다.
+- Nginx 인그레스에는 인그레스 컨트롤러 자체가 L7 수준의 처리를 하는 파드이기도 하므로, 이름은 컨트롤러이지만 실제 처리도 한다.
+
+사진> 클러스터 내부에 인그레스용 파드를 배포하는 인그레스
+
+
+- 정의된 규칙에 일치하지 않을 경우의 기본 목적지용 디플로이먼트도 생성해야 한다는 점에 주의.
+  - 대부분은 정의되지 않은 요청이 들어올 때 반환하는 404 Not Found 페이지를 준비해 두면 문제 없다.
+- 디플로이먼트는 'L7 처리를 하는 Nginx 인그레스 컨트롤러 파드'나 '기본 백엔드용 파드'의 수가 고정이면 트래픽이 증가할 때 제대로 처리하지 못할 가능성이 있으므로 파드에 오토 스케일링하는 HorizontalPodAutoscaler(HPA)의 사용도 검토해보자.
+
+
+사진> Nginx 인스레스 컨트롤러 구성
+
+
+- 클러스터 외부로부터의 통신을 확보하기 위해 Nginx 인그레스 컨트롤러의 파드에 로드 밸런서 서비스(NodePort 등에서도 가능)를 생성해야 한다.
+
+코드> Nginx 인그레스 콘트롤러 설치(ingress-nginx ...)
+
+
+5. 인그레스 리소스 생성을 위한 사전 준비
+- 인그레스 리소스를 생성하려면 사전 준비가 필요하다.
+- 인그레스는 먼저 생성된 서비스를 백엔드로 전송하는 구조로 되어있어 아래 매니페스트에 있는 서비스를 생성해야 한다.
+- 백엔드에서 사용하는 서비스는 type: NodePort를 지정한다.
+* 매니페스트에서는 동작 확인을 위해 서비스에 연결되는 파드도 생성했지만, 인그레스 리소스에서 필요한 것은 서비스 리소스뿐이다.
+
+코드> 인그레스 동작 확인에 필요한 애플리케이션 예제 (smaple-ingress-apps.yaml)
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-ingress-svc-1
+spec:
+  type: NodePort
+  ports:
+  - name: "http-port"
+    portocol: "TCP"
+    port: 8888
+    targetPort: 80
+  selector:
+    ingress-app: sample1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-ingress-apps-1
+  labels:
+    ingress-app: sample1
+spec:
+  containers:
+  - name: nginx-container
+    image: amsy810/echo-nginx:v2.0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-ingress-svc-2
+spec:
+  type: NodePort
+  ports:
+  - name: "http-port"
+    protocol: "TCP"
+    port: 8888
+    targetPort: 80
+  selector:
+    ingress-app: sample2
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-ingress-apps-2
+  labels:
+    ingress-app: sample2
+spec:
+  containers:
+  - name: nginx-container
+    image: amsy810/echo-nginx:v2.0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-ingress-default
+spec:
+  type: NodePort
+  ports:
+  - name: "http-port"
+    protocol: "TCP"
+    port: 8888
+    targetPort: 80
+  selector:
+    ingress-app: default
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-ingress-default
+  labels:
+    ingress-app: default
+spec:
+  containers:
+  - name: nginx-container
+    image: amsy810/echo-nginx:v2.0
+
+
+작업정리 - 다음 세 가지 서비스와 퍼드가 쌍으로 생성되었다.
+  - sample-ingress-svc-1 서비스 -> sample-ingress-apps-1 파드
+  - sample-ingress-svc-2 서비스 -> sample-ingress-apps-2 파드
+  - sample-ingress-default 서비스 -> sample-ingress-default 파드
+
+
+- 인그레스에서 HTTP를 사용하는 경우에는 사전에 인증서를 시크릿 리소스로 생성해야 한다.
+  - 시크릿은 인증서 정보로 매니페스트를 작성하고 등록하거나 인증서 파일을 지정하여 kubectl create secret 명령어로 생성한다.
+
+* 자체 서명된 인증서를 생성하여 테스트
+
+# 자체 서명된 인증서 생성
+$ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \ 
+-keyout ~/tls.key -out ~/tls.crt -subj "/CN=sample.example.com"
+
+# 시크릿 생성(인증서 파일을 지정한 경우)
+$ kubectl create secret tls --save-config tls-sample --key ~/tls.key --cert ~/tls.crt
+
+
+
+6. 인그레스 리소스 생성
+- 사전 준비에서 인그레스에서 사용할 서비스 백엔드를 생성했다.
+- 인그레스 리소스는 L7 로드 밸런서이기 때문에 특정 호스트명에 대해 '요청 경로 > 서비스 백엔드' 형태의 쌍으로 전송 규칙을 설정한다.
+  - 또한, 하나의 IP 주소에서 여러 호스트명을 처리할 수 있다.
+- spec.rules[].http.paths[].backend.servicePort에 설정할 포트 번호는 서비스의 spec.ports[].port를 지정한다.
+- 인그레스 리소스 매니페스트에 정의 가능한 설정은 '클러스터 외부 로드 밸런서를 사용한 인그레스'와 '클러스터 내부에 인그레스용 파드를 배포하는 인그레스'라는 두 방식 중 어떤 방법을 사용하든 비슷하다.
+
+
+GKE용 인그레스 리소스 생성 (생략...)
+
+
+Nginx 인그레스용 인그레스 리소스 생성
+- Nginx 인그레스라도 인그레스 리소스 설정은 기본적으로 GKE의 경우와 같다.
+- GKE 환경에서 Nginx 인그레스를 사용하는 경우에는 GKE 인그레스가 아닌 Nginx 인그레스를 사용하도록 kubernetes.io/ingress.class: nginx의 어노테이션을 지정해야 한다.
+- Nginx 인그레스는 기본값으로 HTTP로부터의 요청을 HTTPS로 리다이렉트하도록 설정되어 있기 때문에 비활성화한다.
+
+코드> Nginx 인그레스를 사용한 인그레스 예제(sampel-ingress-by-nginx.yaml)
+
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: sample-ingress-by-nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+  - host: sample.example.com
+    http:
+      paths:
+      - path: /path1/
+        backend:
+          serviceName: sample-ingress-svc-1
+          servicePort: 8888
+      - path: /path2/
+        bachend:
+          serviceName: sample-ingress-svc-2
+          servicePort: 8888
+  bachend:
+    serviceName: sample-ingress-default
+    servicePort: 8888
+  tls:
+  - hosts:
+    - sample.example.com
+    secretName: tls-sample
+
+
+- Nginx 인그레스의 경우에는 인그레스 컨트롤러 디플로이먼트에 대한 LoadBalancer 서비스 IP주소가 인그레스에도 등록되도록 되어 있다.
+  - sample-ingress-by-nginx.yaml 매니페스트를 적용하면 다음과 같이 인그레스 리소스가 생성된 것을 확인할 수 있다.
+  - 여러 인그레스를 생성해도 같은 IP 주소를 사용한다.
+
+사진> 
+# 인그레스 리소스 목록 확인
+
+
+- 실제 요청을 보내면 정상적으로 반환되는 것을 확인할 수 있다. (단, 기본 요청 목적지의 동작이 조금 다르기 때문에 주의.)
+
+
+# L7 로드 밸런서의 가상 IP를 환경 변수에 저장
+$ INGRESS_IP=`kubectl get ingress sample-ingress-by-nginx -o jsonpath='{.status.loadBalancer.ingress[0].io}'`
+
+# 인그레스 리소스 경유의 HTTP 요청 (/path1/* > sample-ingress-svc-1)
+
+다음부분 사진> 
+
+
+7. X-Forwarded-For 헤더에 의한 클라이언트 IP 주소 참조
+- 인그레스 경유로 들어오는 트래픽에는 기본적으로 X-Forwarded-For(XFF) 헤더가 지정되어 있으므로 클라이언트 IP 주소(발신 측 IP 주소)를 참조할 수 있게 되어 있다.
+- 환경이나 사용하는 구현에 따라 지정되지 않거나 NAT되어 정확한 값을 참조할 수 없는 경우도 있므로 주의!
+
+8. 인그레스 클래스에 의한 인그레스 분리
+- 배포한 인그레스 컨트롤러는 클러스터에 등록된 모든 인그레스 리소스를 볼 수 있어 충돌이 발생할 가능성이 있다.
+  - 이 경우 인그레스 클래스를 사용하여 처리하는 대상의 인그레스 리소스를 분리할 수 있다.
+
+사진> 예상되는 동작
+
+
+
+- Nginx 인그레스 컨트롤러에서도 위의 예상되는 동작만 기대하면 예사잋 못한 상황이 발생한다.
+- 인그레스 콘트롤러 자체가 L7 로드 밸런서인 것처럼 구현되어 있어서 아무 설정을 하지 않을 경우에는 전체 리소스를 watch하여 Nginx 파드 설정을 업데이트하므로 분리가 되지 않기 때문이다.
+
+그림> Nginx 인그레스 실제 동작(인그레스 클래스를 사용하지 않은 상태)
+
+
+- 이런 분리성을 확보하기 위해 인그레스 리소스에 클래스의 어노테이션을 지정하고 Nginx 인그레스 컨트롤러에 해당하는 인그레스 클래스를 설정하여 대상을 분리할 수 있다.
+  - Nginx 인그레스 컨트롤러 기동 시 --ingress-class 옵션을 전달
+    - /nginx-ingress-controller --ingress-class=system_a...
+  - 인그레스 리소스에 어노테이션을 지정
+    - kubernetes.io/ingress.class: "system_a"
+
+
+사진> 인그레스 클래스를 사용하여 Nginx 인그레스 대상을 분리
+
+
+9. 1.18 Beta 인그레스의 GA 승격을 위한 변경
+- 쿠버네티스 1.18 버전에서는 인그레스 수정을 시작하여 GA 승격을 위한 몇 가지 변경이 이루어 졌다.
+  - 아직 변경된 기능에 대응하고 있는 것은 적지만(2021년 5월 기준), 앞으로 모든 인그레스 컨트롤러가 대응될 전망
+    - IngressClass 리소스에 의해 Ingress 분리
+    - pathType에 의한 경로
+    - 호스트 이름에서 와일드카드 매칭
+
+- IngressClass 지정은 앞에서 설명한 어노테이션에 의한 지정이 아니라 IngressClass 리소스와 인그레스 리소스의 spec.ingressClassName에서 지정하는 방법으로 대체될 예정이다.
+- IngressClass 리소스를 사용하는 방법은 StorageCalss와 PersisitentVolumeClaim 리소스의 spec.storageClassName과 같다.
+- 또, 지금까지 인그레스 리소스에 경로를 지정한 경우 처리는 각각의 인그레스 컨트롤러 구현에 따라 달랐지만 pathType(아래 표)으로 설정할 수 있게 되었다.
+- 기본 설정값은 지금과 같은 ImplementationSpecific(구현에 따라 처리가 다름)이다.
+
+코드>
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /path1
+        backend:
+          serviceName: sample-ingress-svc-1
+          servicePort: 8888
+
+
+
+사진> pathType 설정값
+
+
+
+정리>
+- 쿠버네티스에서는 파드 서비스 디스커버리나 L4 로드 밸런싱 기능을 제공하기 위해 서비스 리소스가 준비되어 있다.
+- 또한, 비슷한 리소스로 L7 로드 밸런싱 기능을 제공하는 인그레스도 있다.
+
+- 서비스
+  - L4 로드 밸런싱
+  - 클러스터 내부 DNS를 사용한 이름 해석
+  - 레이블을 사용한 파드의 서비스 디스커버리
+- 인그레스
+  - L7 로드 밸런싱
+  - SSL 터미네이션
+  - 경로 기반 라우팅
+
+- 서비스에는 엔드포인트를 제공하는 여러 type이 준비되어 있고, 요구 사항에 맞춰 선택할 수 있다.
+- 기본적으로 내부 엔드포인트를 할당하고 싶을 때 사용하는 type: ClusterIP와 외부 엔드포인트를 할당하고 싶을 때 사용하는 type: LoadBalancer 가 많이 사용된다.
+
+
+사진> 서비스 종류
+
+
+- 인그레스에는 type 등이 없지만, 구현에 따라 사양이 크게 달라지는 경우가 있으니 주의해야 한다.
+
+인그레스종류                           구현 예제
+클러스터 외부 로드 밸런서를 사용한 인그레스 | GKE
+클러스터 내부에 인그레스용 파드를 배포하는 인그레스 | Nginx 인그레스
+
+
+
+HorizontalPodAutoscaler
+
+- HorizontalPodAutoscaler(HPA)는 디플로이먼트/레플리카셋/레플리케이션 컨트롤러의 레플리카 수를 CPU 부하 등에 따라 자동으로 스케일하는 리소스다.
+- 부하가 높아지면 스케일 아웃하고, 부하가 낮아지면 스케일 인된다.
+- 파드에 Resource Requests가 설정되어 있지 않은 경우에는 동작하지 않는다.
+
+사진> HorizontalPodAutoscaler 이미지
+
+
+- HorizontalPodAutoscaler는 30초에 한 번 꼴로 오토 스케일링 여부를 확인한다.
+- 구체적으로 다음 수식에서 필요한 레플리카 수를 계산한다(ceil 함수는 소수점 첫째 자리에서 올림하여 정수 값을 리턴하는 함수)
+  - 필요한 레플리카 수 = ceil(sum(파드의 현재 CPU 사용률) / targetAverageUtilization)
+
+
+사진> HorizontalPodAutoscaler의 필요한 레플리카 수 계산
+
+
+- CPU 사용률을 metrics-server(구 Heapster)에서 가져온 각 파드의 1분간 평균값을 사용한다.
+- 최대 3분에 1회 스케일 아웃을 실행하고, 최대 5분에 1회 스케일 인을 실행함으로써 기동 시에만 CPU의 부하가 상승하는 메트릭 노이즈 영향을 최소화할 수 있다.
+- 일반적으로 스케일 아웃은 빨리해야 하지만, 스케일 인은 그렇게까지 중요하지 않아 이런 차이가 있다.
+- 스케이링의 실행 조건은 다음과 같은 조건식으로 결정된다. 이는 파드 수가 매우 많은 경우 등은 어느 정도 허용되고 세밀한 스케일링이 실행되지 않도록 고려된 조건식이다.
+  - 스케일 아웃 조건식
+    - avg(파드의 현재 CPU 사용률) / targetAverageUtilization > 1.1
+  - 스케일 인 조건식
+    - avg(파드의 현재 CPU 사용률) / targetAverageUtilization < 0.9
+
+
+HorizontalPodAutoscaler에서는 스케일 조건과 최저 레플리카 수/최고 레플리카 수를 지정한다.
+
+코드> HorizontalPodAutoscaler 예제 (sample-hpa.yaml)
+
+apiVerison: autoscaling/v2bata
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sample-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sample-hpa-deployment
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resources
+    resources:
+      name: cpu
+      targetAverageUtilization: 50
+
+
+kubectl로 직접 생성할수 있음
+
+# CLI로 직접 생성할 수 있다.
+$ kubectl autoscale deployment sample-deployment --cpu-percent=50 --min=1 --max=10
+horizontalpodautoscaler.autoscaling/sample-deloyment autoscaled
+
+
+- 디플로이먼트를 사용하여 HPA 동작을 확인. 서비스를 통해 Apache Bench로 부하를 주면서 HorizontalPodAutoscaler의 변화를 확인해보면 50%를 넘는 타이밍에 레플리카 수가 증가하고 있다. 레플리카 수를 증가시킨 결과, CPU 사용률이 63%까지 떨어지는 것을 확인할 수 있다.
+
+- 예제설명 : Apache Bench 로 부하를 주고 있으며, 전달되는 요청량이 증가함에 따라 부하도 증가하고 있어서 CPU 사용률이 줄어들지 않았다. 이와 같이 CPU 사용률이 기준으로 파드를 오토 스케일링할 수 있다.
+
+사진> HPA 상태 확인(일부 내용 생략)
+
+- 위 예에서는 기본으로 사용할 수 있는 CPU 사용률을 사용한 HorizontalPodAutoscaler를 사용했다. 이외에도 Customer Metrics를 사용하여 임의의 지표에 따라 오토 스케일링을 할 수 있다. CPU 이외에 리소스를 사용하여 오토 스케일링을 하는 경우에는 프로메테우스(Prometheus)나 그외의 메트릭 서버와 연계하기 위한 설정이 별도로 필요하다.
+
+사진> HorizontalPodAutoscaler에서 사용 가능한 메트릭의 종류
+
+HorizontalPodAutoscaler 스케일링 동작 설정
+- 쿠버네티스 1.18부터 도입된 autoscaling/v2bata2의 HorizontalPodAutoscaler에서 spec.behavior 필드가 추가되어 오토 스케일링 빈도나 증감 가능한 레플리카 수 같은 동작을 리소스 단위로 설정할 수 있게 되었다.
+- autoscaling/v2bata의1에서는 쿠버네티스 클러스터 관리자가 시스템 구성 요소에 대해 통일되게 설정해야 해서 응용프로그램마다 조건을 변경할 수 없었다.
+
+코드> 스케일링 동작을 설정한 HorizontalPodAutoscaler 예 (sample-hpa-behavior.yaml)
+
+apiVersion: autoscaling/v2bata2
+kind: HorizontalPodAutoscaler
+mitadata:
+  name: sample-hpa-behavior
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sample-hpa-deployment
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resources
+    resource:
+      name: cpu
+      targetAverageUtilization: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+      
+- 스케일 아웃 정책으로 '15초 동안 100% 증가(레플리카 수가 배가 된다)', '15초 동안 네 개 파드 추가'라는 두 개의 정책이 설정되어 있다.
+- 또 type: Percent에 200%가 지정된 경우는 15초 동안 최대 세 배(100% + 200$%)의 레플리카 수가 되는 것을 의미한다
+
+
+- spec.behavior에는 스케일 인(ScaleDown)과 스케일 아웃(scaleUp) 각각에 대해 여러 정책을 정의 한다.
+- 정책에는 일정 기간 증감 가능한 레플리카 수를 제한하는 정의를 기술한다.
+- 증감 가능한 레플리카 수 제한에는 현재 레플리카 수에 대한 백분율(type: Percent) 또는 정수값(type: Pod)을 지정할 수 있다.
+- selectPolicy에는 여러 개의 지정된 정책 중 어떤 값을 선택할지 지정한다.
+
+
+사진> selectPolicy 선택 항목
+
+- stabilizationWindowSeconds는 레플리카 수가 빈번하게 증감하는 것을 방지하고 트래픽 스파이크로 레플리카 수가 급감하거나 급증하는 것을 피하기 위한 설정이다.
+- stabilizationWindowSeconds에서 지정된 기간 동안 추천 레플리카 수를 바탕으로 레플리카 수를 결정한다.
+- 스케일 인의 경우에는 지정한 기간 동안 최대값이 선택되고, 스케일 아웃인 경우에는 지정한 기간 동안 최소값을 선택하게 된다. 이 기능은 레플리카 수가 갑자기 감소하는 것을 막기 위해 사용하는 것이 좋다.
+- stabilizationWindowSeconds가 0인 경우 바로 추천 레플리카 수로 변경한다. 그래서 스케일 아웃인 경우에는 stabilizationWindowSeconds=0으로 지정해 두는 것이 좋다.
+
+
+VerticalPodAutoscaler
+
+
